@@ -41,7 +41,6 @@ class GameEngine:
         self.step_start_time = 0
         self.flash_duration = 450
         self.pause_duration = 200
-        self.round_lead_in = 600  # pause (ms) before each round's playback starts
         self.is_flashing = False
 
         self.player_lit_button = None
@@ -50,6 +49,13 @@ class GameEngine:
 
         self.font_title = pygame.font.SysFont(None, 40)
         self.font_medium = pygame.font.SysFont(None, 28)
+
+        self.round_lead_in = 600
+        self.game_over_reason = None
+
+        # Per-step countdown during PLAYER_TURN (resets after every correct click)
+        self.step_time_limit = 3000
+        self.step_deadline = 0
 
         self.sounds = self._init_sounds()
 
@@ -102,6 +108,7 @@ class GameEngine:
         # Speed up playback as score rises, clamped to minimum thresholds
         self.flash_duration = max(180, 450 - self.score * 25)
         self.pause_duration = max(80, 200 - self.score * 10)
+        self.step_time_limit = max(1500, 3000 - self.score * 100)
 
         self.player_input.clear()
         self.state = "WATCH"
@@ -128,7 +135,6 @@ class GameEngine:
                     self.is_flashing = False
                     self.step_start_time = now
             else:
-                # Longer gap before the first step, normal gap between steps
                 delay = self.round_lead_in if self.showing_step < 0 else self.pause_duration
                 if now - self.step_start_time >= delay:
                     self.showing_step += 1
@@ -140,6 +146,12 @@ class GameEngine:
                         self.step_start_time = now
                     else:
                         self.state = "PLAYER_TURN"
+                        self.step_deadline = now + self.step_time_limit
+
+        elif self.state == "PLAYER_TURN":
+            if now >= self.step_deadline:
+                self.game_over_reason = "timeout"
+                self.state = "GAME_OVER"
 
     def handle_event(self, event):
         if self.state == "GAME_OVER":
@@ -163,12 +175,15 @@ class GameEngine:
         current_idx = len(self.player_input) - 1
 
         if self.player_input[current_idx] != self.sequence[current_idx]:
+            self.game_over_reason = "wrong"
             self.state = "GAME_OVER"
             return
 
         if len(self.player_input) == len(self.sequence):
             self.score += 1
             self.start_next_round()
+        else:
+            self.step_deadline = pygame.time.get_ticks() + self.step_time_limit
 
     def reset(self):
         self.sequence.clear()
@@ -177,8 +192,26 @@ class GameEngine:
         for btn in self.buttons:
             btn.is_lit = False
         self.player_lit_button = None
-        pygame.mixer.stop()
         self.start_next_round()
+
+    def render_timer_bar(self, screen):
+        remaining = max(0, self.step_deadline - pygame.time.get_ticks())
+        frac = remaining / self.step_time_limit
+
+        bar_w, bar_h = 260, 8
+        x = self.width // 2 - bar_w // 2
+        y = 124
+
+        if frac > 0.5:
+            color = (80, 240, 130)
+        elif frac > 0.25:
+            color = (255, 210, 60)
+        else:
+            color = (240, 70, 70)
+
+        pygame.draw.rect(screen, (50, 54, 64), (x, y, bar_w, bar_h), border_radius=4)
+        if remaining > 0:
+            pygame.draw.rect(screen, color, (x, y, int(bar_w * frac), bar_h), border_radius=4)
 
     def render(self, screen):
         screen.fill((22, 24, 30))
@@ -194,6 +227,9 @@ class GameEngine:
         status_surf = self.font_medium.render(status_text, True, status_color)
         screen.blit(status_surf, (self.width // 2 - status_surf.get_width() // 2, 95))
 
+        if self.state == "PLAYER_TURN":
+            self.render_timer_bar(screen)
+
         for btn in self.buttons:
             btn.render(screen)
 
@@ -202,7 +238,8 @@ class GameEngine:
             overlay.fill((0, 0, 0, 200))
             screen.blit(overlay, (0, 0))
 
-            over_surf = self.font_title.render("WRONG PATTERN! GAME OVER", True, (240, 70, 70))
+            over_text = "TIME'S UP! GAME OVER" if self.game_over_reason == "timeout" else "WRONG PATTERN! GAME OVER"
+            over_surf = self.font_title.render(over_text, True, (240, 70, 70))
             screen.blit(over_surf, (self.width // 2 - over_surf.get_width() // 2, self.height // 2 - 40))
 
             final_score_surf = self.font_medium.render(f"Final Score: {self.score}", True, (255, 255, 255))
