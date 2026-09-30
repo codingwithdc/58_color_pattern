@@ -42,11 +42,12 @@ class GameEngine:
 
     def start_next_round(self):
         new_color = random.randint(0, 3)
+        self.sequence.append(new_color)
 
-        # BUG SYMPTOM:
-        # Sequence duplicates previous steps and grows exponentially each round.
-        self.sequence += self.sequence + [new_color]
-        
+        # Speed up playback as score rises, clamped to minimum thresholds
+        self.flash_duration = max(180, 450 - self.score * 25)
+        self.pause_duration = max(80, 200 - self.score * 10)
+
         self.player_input.clear()
         self.state = "WATCH"
         self.showing_step = 0
